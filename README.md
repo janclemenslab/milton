@@ -19,8 +19,8 @@ will obfuscate all experiments from June 19th 2020 in `dat`. The experimental an
 
 To restore annotation results, provide the path to the obfuscation folder and a mask to select which files to restore back to the original folders:
 ```shell
-milton restore ~/dat_blind/20201231_115900/ -m *annotated.txt
+milton restore ~/dat_blind/20201231_115900/ -m *songmanual.zarr
 ```
-`milton` will load the info required for restoration and look for all files in `res` that match the mask (in this case `*songmanual.zarr`, which is also the default). It will not touch the contents of `dat`.
+`milton` will load the info required for restoration and restore all files in `res` that match the mask (in this case `*songmanual.zarr`, which is also the default), by copying them to their original folders. It will not touch the contents of `dat`.
 
 
