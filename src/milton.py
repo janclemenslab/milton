@@ -8,10 +8,10 @@ import string
 import glob
 import defopt
 import tqdm
-
+import logging
 
 __version__ = "0.1"
-
+logging.basicConfig(level=logging.ERROR)
 
 def confirm(question, default=True):
     """
@@ -113,34 +113,24 @@ def clean(*, path: str = 'dat_blind'):
 def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
     """Obfuscate experiments for blinded annotation.
 
-    'milton obfuscate SOURCE -t TARGET'
+    Will look for folders matching SOURCE and
+    obfuscate the corresponding folders from "res" and "dat".
 
-    Will look for directories matching SOURCE into
-    subfolders with obfuscated name in TARGET.
+    SOURCE can contain wildcards. E.g., when in a
+    rig-specific folder on the lab volume,
+    "milton obfuscate 'dat/localhost-20200619*'" will match and obfuscate
+    all folders from June 19th 2020. Also accepts absolute paths.
 
-    SOURCE can contain wildcards.
-    E.g. when in a rig-specific folder on the lab volume,
-    "milton obfuscate 'dat/localhost-20200619*'" will match all directories from June 19th 2020.
-    Will move matching directories into '~/dat_blind/CURRENT_DATETIME/'
-    and obfuscate their names.
-
-    The root folder to store obfuscated directories in can be changed
-    from  '~/dat_blind' via '--target PATH'.
-
-    Annotations should be saved to the obfuscated data folder
-    '~/dat_blind/CURRENT_DATETIME/OBFUSCATED_NAME', not in a 'res' folder.
-
-    Information for restoring the files will be created at
-    '~/dat_blind/CURRENT_DATETIME/CURRENT_DATETIME.yaml'.
+    A new folder in TARGET named after the current date and time will
+    be created and the matches in "res" and "dat" will be
+    copied with obfuscated names.
 
     Restore with the created obfuscation folder as an argument:
-    "milton restore "~/dat_blind/CURRENT_DATETIME".
+    "milton restore "~/dat_blind/CURRENT_DATE_TIME".
 
     Args:
         source (str): Name pattern for selecting which experiments to obfuscate.
-                      Use wildcards! E.g. 'dat/localhost-2020619*' will obfuscate
-                      all experiments from Juneteenth 2020.
-        target (str): Root directory to copy obfuscated files into.
+        target (str): Root folder to copy obfuscated files into.
 
     Returns:
         str: Name of the obfuscation folder.
@@ -149,69 +139,77 @@ def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
         target = os.path.expanduser('~/dat_blind')
 
     source_trunk = os.path.dirname(os.path.abspath(source))
+    if source_trunk.endswith('res'):
+        source_trunk = source_trunk[:-3] + 'dat'
+
     obfuscate_trunk = os.path.abspath(target)
 
-    # search_pattern = os.path.join(source_trunk, mask)
+    # list all folders that match the source pattern
     dirlist = [os.path.basename(d)
             for d in glob.glob(source)
             if os.path.isdir(d)]
     suffix = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     obfuscate_trunk = os.path.join(obfuscate_trunk, suffix)
 
-    print(f"Found {len(dirlist)} directories matching {source}.")
+    print(f"Found {len(dirlist)} folders matching {source}.")
     pprint(dirlist)
-    print(f"These files will be obfuscated to {obfuscate_trunk}/.")
+    print(f"Files in dat and res for these folders will be obfuscated to {obfuscate_trunk}/.")
     if confirm("Do you want to continue?", default=True):
         mapping = {d.replace('localhost-', ''): random_exptname() for d in dirlist}
         obfuscate_info = {'source_trunk': source_trunk,
                           'obfuscate_trunk': obfuscate_trunk,
                           'mapping': mapping}
-        pprint(obfuscate_info)
+
         restore_file = os.path.join(obfuscate_info['obfuscate_trunk'], suffix + '.yaml')
         os.makedirs(obfuscate_info['obfuscate_trunk'], exist_ok=True)
 
-        print(f"Saving restoration info to {restore_file}.")
         with open(restore_file, 'w') as f:
             yaml.safe_dump(obfuscate_info, f)
 
-        # obfuscate
-        copy_and_rename(obfuscate_info['source_trunk'],
-                        obfuscate_info['obfuscate_trunk'],
-                        obfuscate_info['mapping'])
+        # obfuscate files in dat and res
+        for typ in ['dat', 'res']:
+            copy_and_rename(obfuscate_info['source_trunk'].replace('dat', typ),
+                            os.path.join(obfuscate_info['obfuscate_trunk'], typ),
+                            obfuscate_info['mapping'])
         return obfuscate_trunk
 
 
-# def restore(restore_file: str, *, restore_trunk: str = 'res', restore_overwrite: bool = False, restore_mask: str = '*_songmanual.zarr'):
-def restore(source: str, *, mask: str = '*_songmanual.zarr', target: str = 'res', overwrite: bool = False):
+def restore(source: str, *, mask: str = '*songmanual.zarr', overwrite: bool = False):
     """Restore obfuscated results.
 
-    'milton SOURCE -m MASK -t TARGET'
+    "milton restore SOURCE -m MASK"
 
-    Will restore the original names of all obfuscated files
-    in SOURCE matching MASK and move them to TARGET.
+    Will restore the obfuscated files in SOURCE/res
+    that match MASK to their original folder. Will not
+    touch SOURCE/dat
 
-    To be useful, MASK should contain wildcards. By default, all files
-    ending in '_songmanual.zarr' will be restored.
+    To be useful, MASK should contain wildcards. Defaults to match
+    manual annotation files (`*songmanual.zarr`).
 
-    If called from within the rig-specific folder on the lab volume,
-    files will be restored to their respective subfolders in the 'res'.
+    Example:
+    `milton restore dat_blind/20200621_110046 *_tuna.h5`
+    will restore all files from "~/dat_blind/20200621_110046/res/"
+    end in "_tuna.h5".
 
     Args:
-        source (str): Folder with the obfuscated directories.
+        source (str): Folder with the obfuscated folder structure.
         mask (str): Selects file types to be restored.
-        target (str): Root directory into which the files should restored.
         overwrite (bool): Overwrite existing files.
     """
     obfuscate_trunk = os.path.normpath(os.path.abspath(source))
     restore_file = os.path.basename(obfuscate_trunk) + '.yaml'
     restore_file = os.path.join(obfuscate_trunk, restore_file)
-    restore_trunk = os.path.abspath(target)
 
     with open(restore_file, 'r') as f:
         restore_info = yaml.safe_load(f)
-    print(f"Found {len(restore_info['mapping'])} directories in {restore_file}.")
-    print(f"Files in these folders matching {mask} will be restored")
-    print(f"to the following folders in {restore_trunk}")
+
+    # use the original folder as destination for restore
+    restore_trunk = os.path.abspath(restore_info['source_trunk'])
+    # we only want to restore files in 'res' - replace dat with res at the end
+    restore_trunk = restore_trunk[:-3] + 'res'
+
+    print(f"Found {len(restore_info['mapping'])} obfuscated folders in '{obfuscate_trunk}/res',")
+    print(f"All files in these folders matching {mask} will be restored to their original in {restore_trunk}:")
     pprint(["localhost-" + k for k in restore_info['mapping'].keys()])
 
     if overwrite:
@@ -220,7 +218,7 @@ def restore(source: str, *, mask: str = '*_songmanual.zarr', target: str = 'res'
         print(f"Existing files will *NOT* be overwritten (call with `-o` force overwrites).")
 
     if confirm("Do you want to continue?", default=True):
-        copy_and_rename(restore_info['obfuscate_trunk'],
+        copy_and_rename(os.path.join(restore_info['obfuscate_trunk'], 'res'),
                         restore_trunk,
                         invert(restore_info['mapping']),
                         overwrite=overwrite,
