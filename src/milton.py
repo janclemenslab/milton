@@ -9,11 +9,15 @@ import glob
 import defopt
 import tqdm
 import logging
+from typing import Dict
 
-__version__ = "0.1"
+
+__version__ = "0.2"
+# suppress defopt format warnings
 logging.basicConfig(level=logging.ERROR)
 
-def confirm(question, default=True):
+
+def _confirm(question, default=True):
     """
     Ask user a yes/no question and return their response as True or False.
 
@@ -48,19 +52,32 @@ def confirm(question, default=True):
         print("I didn't understand you. Please specify '(y)es' or '(n)o'.")
 
 
-def random_exptname():
+def _random_exptname():
+    """Generate randome expt name NNNNNNNN_NNNNNN, where N is any number 0..9"""
     r = ''.join(random.choice(string.digits) for _ in range(8))
     r = r + '_' + ''.join(random.choice(string.digits) for _ in range(6))
     return r
 
 
-def invert(mapping):
+def _invert(mapping: Dict) -> Dict:
+    """Invert dictionary {k: v} -> {v: k}."""
     return {target: source for source, target in mapping.items()}
 
 
-def copy_and_rename(source_trunk, target_trunk, mapping,
-                    keep_source=True, overwrite=False,
-                    file_mask='*', mode='obfuscate'):
+def _copy_and_rename(source_trunk: str, target_trunk: str, mapping: Dict,
+                    keep_source: bool = True, overwrite: bool = False,
+                    file_mask: str = '*', mode: str = 'obfuscate'):
+    """[summary]
+
+    Args:
+        source_trunk (str): [description]
+        target_trunk (str): [description]
+        mapping (Dict): [description]
+        keep_source (bool, optional): [description]. Defaults to True.
+        overwrite (bool, optional): [description]. Defaults to False.
+        file_mask (str, optional): [description]. Defaults to '*'.
+        mode (str, optional): [description]. Defaults to 'obfuscate'.
+    """
 
     for source, target in tqdm.tqdm(mapping.items()):
         copy_from = os.path.join(source_trunk, 'localhost-' + source)
@@ -91,25 +108,6 @@ def copy_and_rename(source_trunk, target_trunk, mapping,
                 shutil.move(copyfile_from, copyfile_to)
 
 
-def clean(*, path: str = 'dat_blind'):
-    print(f"Cleaning {path}.")
-    if not os.path.exists(path):
-        print(f"{path} does not exist - quitting.")
-        return
-
-    dirlist = os.listdir(path)
-    print(f"WARNING: This will delete all {len(dirlist)} in {path}!")
-    pprint(dirlist)
-
-    if confirm("Are you sure?", default=True):
-        for d in dirlist:
-            target = os.path.join(path, d)
-            if os.path.isdir(target):
-                shutil.rmtree(target)
-            elif os.path.isfile(target):
-                os.remove(target)
-
-
 def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
     """Obfuscate experiments for blinded annotation.
 
@@ -137,12 +135,12 @@ def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
     """
     if target == 'HOME_FOLDER/dat_blind':
         target = os.path.expanduser('~/dat_blind')
+    obfuscate_trunk = os.path.abspath(target)
 
+    # normalize source_trunk to point to dat even if we select files based on res
     source_trunk = os.path.dirname(os.path.abspath(source))
     if source_trunk.endswith('res'):
         source_trunk = source_trunk[:-3] + 'dat'
-
-    obfuscate_trunk = os.path.abspath(target)
 
     # list all folders that match the source pattern
     dirlist = [os.path.basename(d)
@@ -154,27 +152,28 @@ def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
     print(f"Found {len(dirlist)} folders matching {source}.")
     pprint(dirlist)
     print(f"Files in dat and res for these folders will be obfuscated to {obfuscate_trunk}/.")
-    if confirm("Do you want to continue?", default=True):
-        mapping = {d.replace('localhost-', ''): random_exptname() for d in dirlist}
+    if _confirm("Do you want to continue?", default=True):
+        # generate random names
+        mapping = {d.replace('localhost-', ''): _random_exptname() for d in dirlist}
+
+        # store all information required to restore files in a yaml file
         obfuscate_info = {'source_trunk': source_trunk,
                           'obfuscate_trunk': obfuscate_trunk,
                           'mapping': mapping}
-
         restore_file = os.path.join(obfuscate_info['obfuscate_trunk'], suffix + '.yaml')
         os.makedirs(obfuscate_info['obfuscate_trunk'], exist_ok=True)
-
         with open(restore_file, 'w') as f:
             yaml.safe_dump(obfuscate_info, f)
 
         # obfuscate files in dat and res
         for typ in ['dat', 'res']:
-            copy_and_rename(obfuscate_info['source_trunk'].replace('dat', typ),
+            _copy_and_rename(obfuscate_info['source_trunk'].replace('dat', typ),
                             os.path.join(obfuscate_info['obfuscate_trunk'], typ),
                             obfuscate_info['mapping'])
         return obfuscate_trunk
 
 
-def restore(source: str, *, mask: str = '*songmanual.zarr', overwrite: bool = False):
+def restore(source: str, *, mask: str = '*songmanual.zarr', overwrite: bool = False) -> None:
     """Restore obfuscated results.
 
     "milton restore SOURCE -m MASK"
@@ -217,10 +216,10 @@ def restore(source: str, *, mask: str = '*songmanual.zarr', overwrite: bool = Fa
     else:
         print(f"Existing files will *NOT* be overwritten (call with `-o` force overwrites).")
 
-    if confirm("Do you want to continue?", default=True):
-        copy_and_rename(os.path.join(restore_info['obfuscate_trunk'], 'res'),
+    if _confirm("Do you want to continue?", default=True):
+        _copy_and_rename(os.path.join(restore_info['obfuscate_trunk'], 'res'),
                         restore_trunk,
-                        invert(restore_info['mapping']),
+                        _invert(restore_info['mapping']),
                         overwrite=overwrite,
                         file_mask=mask,
                         mode='restore')
