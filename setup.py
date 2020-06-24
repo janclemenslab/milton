@@ -26,7 +26,7 @@ with open(os.path.join(this_directory, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 setup(name='milton',
-      version=find_version("src/milton.py"),
+      version=find_version("src/milton/__init__.py"),
       description='milton',
       long_description=long_description,
       long_description_content_type="text/markdown",
@@ -39,5 +39,5 @@ setup(name='milton',
       install_requires=['defopt', 'tqdm', 'pyyaml'],
       include_package_data=True,
       zip_safe=False,
-      entry_points={'console_scripts': ['milton=milton:cli'], }
+      entry_points={'console_scripts': ['milton=milton.milton:cli'], }
      )

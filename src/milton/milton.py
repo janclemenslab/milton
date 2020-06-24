@@ -12,7 +12,6 @@ import logging
 from typing import Dict
 
 
-__version__ = "0.2"
 # suppress defopt format warnings
 logging.basicConfig(level=logging.ERROR)
 
