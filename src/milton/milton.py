@@ -9,7 +9,7 @@ import glob
 import defopt
 import tqdm
 import logging
-from typing import Dict
+from typing import Dict, List
 
 
 # suppress defopt format warnings
@@ -107,16 +107,37 @@ def _copy_and_rename(source_trunk: str, target_trunk: str, mapping: Dict,
                 shutil.move(copyfile_from, copyfile_to)
 
 
-def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
+def _clean(path):
+    print(f"Cleaning {path}.")
+    if not os.path.exists(path):
+        print(f"{path} does not exist - quitting.")
+        return
+
+    dirlist = os.listdir(path)
+    print(f"WARNING: This will delete all {len(dirlist)} in {path}!")
+    pprint(dirlist)
+
+    if confirm("Are you sure?", default=True):
+        for d in dirlist:
+            target = os.path.join(path, d)
+            if os.path.isdir(target):
+                shutil.rmtree(target)
+            elif os.path.isfile(target):
+                os.remove(target)
+
+
+def obfuscate(sources: List[str], *, target: str = 'HOME_FOLDER/dat_blind') -> str:
     """Obfuscate experiments for blinded annotation.
 
-    Will look for folders matching SOURCE and
+    Will look for folders matching SOURCES and
     obfuscate the corresponding folders from "res" and "dat".
 
-    SOURCE can contain wildcards. E.g., when in a
+    SOURCES can be a list and may contain wildcards. E.g., when in a
     rig-specific folder on the lab volume,
     "milton obfuscate 'dat/localhost-20200619*'" will match and obfuscate
-    all folders from June 19th 2020. Also accepts absolute paths.
+    all folders from June 19th 2020.
+    "milton obfuscate dat/localhost-20200619_161734 dat/localhost-20200619_190710" will
+    obfuscate data from the two specified folders. Also accepts absolute paths.
 
     A new folder in TARGET named after the current date and time will
     be created and the matches in "res" and "dat" will be
@@ -126,7 +147,7 @@ def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
     "milton restore "~/dat_blind/CURRENT_DATE_TIME".
 
     Args:
-        source (str): Name pattern for selecting which experiments to obfuscate.
+        sources (List[str]): Name pattern(s) for selecting which experiments to obfuscate.
         target (str): Root folder to copy obfuscated files into.
 
     Returns:
@@ -135,20 +156,27 @@ def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
     if target == 'HOME_FOLDER/dat_blind':
         target = os.path.expanduser('~/dat_blind')
     obfuscate_trunk = os.path.abspath(target)
+    dirlist = []
+    source_trunks = []
+    for source in sources:
+        # normalize source_trunk to point to dat even if we select files based on res
+        source_trunk = os.path.dirname(os.path.abspath(source))
+        if source_trunk.endswith('res'):
+            source_trunk = source_trunk[:-3] + 'dat'
+        source_trunks.append(source_trunk)
+        # list all folders that match the source pattern
+        dirlist.extend([os.path.basename(d)
+                        for d in glob.glob(source)
+                        if os.path.isdir(d)])
 
-    # normalize source_trunk to point to dat even if we select files based on res
-    source_trunk = os.path.dirname(os.path.abspath(source))
-    if source_trunk.endswith('res'):
-        source_trunk = source_trunk[:-3] + 'dat'
+    if len(set(source_trunks)) > 1:
+        raise ValueError(f"Sources need have the same parent directory.\nYou provided sources from {len(set(source_trunks))} parents:\n{set(source_trunks)}.")
 
-    # list all folders that match the source pattern
-    dirlist = [os.path.basename(d)
-            for d in glob.glob(source)
-            if os.path.isdir(d)]
     suffix = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     obfuscate_trunk = os.path.join(obfuscate_trunk, suffix)
+    breakpoint()
 
-    print(f"Found {len(dirlist)} folders matching {source}.")
+    print(f"Found {len(dirlist)} folders matching {sources}.")
     pprint(dirlist)
     print(f"Files in dat and res for these folders will be obfuscated to {obfuscate_trunk}/.")
     if _confirm("Do you want to continue?", default=True):
@@ -157,8 +185,8 @@ def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
 
         # store all information required to restore files in a yaml file
         obfuscate_info = {'source_trunk': source_trunk,
-                          'obfuscate_trunk': obfuscate_trunk,
-                          'mapping': mapping}
+                        'obfuscate_trunk': obfuscate_trunk,
+                        'mapping': mapping}
         restore_file = os.path.join(obfuscate_info['obfuscate_trunk'], suffix + '.yaml')
         os.makedirs(obfuscate_info['obfuscate_trunk'], exist_ok=True)
         with open(restore_file, 'w') as f:
@@ -169,10 +197,11 @@ def obfuscate(source: str, *, target: str = 'HOME_FOLDER/dat_blind') -> str:
             _copy_and_rename(obfuscate_info['source_trunk'].replace('dat', typ),
                             os.path.join(obfuscate_info['obfuscate_trunk'], typ),
                             obfuscate_info['mapping'])
-        return obfuscate_trunk
+    return obfuscate_trunk
 
 
-def restore(source: str, *, mask: str = '*songmanual.zarr', overwrite: bool = False) -> None:
+def restore(source: str, *, mask: str = '*songmanual.zarr',
+            overwrite: bool = False, delete: bool = False) -> None:
     """Restore obfuscated results.
 
     "milton restore SOURCE -m MASK"
@@ -193,6 +222,7 @@ def restore(source: str, *, mask: str = '*songmanual.zarr', overwrite: bool = Fa
         source (str): Folder with the obfuscated folder structure.
         mask (str): Selects file types to be restored.
         overwrite (bool): Overwrite existing files.
+        delete (bool): Delete the *whole* obfuscated folder after restoration.
     """
     obfuscate_trunk = os.path.normpath(os.path.abspath(source))
     restore_file = os.path.basename(obfuscate_trunk) + '.yaml'
@@ -222,6 +252,8 @@ def restore(source: str, *, mask: str = '*songmanual.zarr', overwrite: bool = Fa
                         overwrite=overwrite,
                         file_mask=mask,
                         mode='restore')
+        if delete and _confirm(f"Do you really want to delete the folder {obfuscate_trunk}?", default=True):
+            shutil.rmtree(obfuscate_trunk, ignore_errors=False)
 
 
 def cli():
